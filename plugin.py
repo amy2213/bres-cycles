@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, sys, math
+import json, sys
 from typing import Optional, List, Dict
 import typer
 
@@ -29,11 +29,9 @@ def detect(
     dataset: Optional[str] = typer.Option(None, help="Built-in dataset: venus | coligny"),
     report_supercycle: bool = typer.Option(False, help="Report supercycle if harmonic present"),
     boundary_mode: str = typer.Option("heuristic", help="Boundary mode: heuristic | hmm"),
-    # dataset-specific
     venus_mode: str = "daily", venus_cycles: int = 65,
     coligny_mode: str = "month", coligny_years: int = 5,
     coligny_intercalary: str = "plaque", coligny_boundaries: bool = True,
-    # candidates
     candidates: Optional[str] = typer.Option(None, help="Comma list like '12,18,36'."),
     json_out: str = typer.Option("-", help="Output path or '-' for stdout.")
 ):
@@ -90,3 +88,36 @@ def detect(
             payload["note"] = f"{sup} is a multiple of {best} with support"
 
     _emit(payload, json_out)
+
+# ---- Sub-app for classification
+sub_app = typer.Typer(help="Ritual subtype classification")
+app.add_typer(sub_app, name="classify")
+
+@sub_app.command("predict")
+def classify_predict(
+    seq: Optional[str] = typer.Option(None, help="Sequence to classify; if omitted, read from stdin"),
+    use_ml: bool = typer.Option(True, help="Use the RF model if trained"),
+):
+    if seq is None:
+        data = sys.stdin.read().strip()
+        if not data:
+            typer.secho("No sequence provided via --seq or stdin.", fg=typer.colors.RED)
+            raise typer.Exit(2)
+        seq = data
+    from bres_subtypes.classifier import RitualSubtypePipeline
+    pipe = RitualSubtypePipeline()
+    out = pipe.predict(seq, use_ml=use_ml)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+@sub_app.command("fit-csv")
+def classify_fit_csv(
+    csv_path: str = typer.Argument(..., help="CSV with columns: sequence,label"),
+    seq_col: str = typer.Option("sequence", help="Column with token sequence"),
+    label_col: str = typer.Option("label", help="Column with target label"),
+    model_out: str = typer.Option("subtype_model.joblib", help="Where to save the trained model")
+):
+    from bres_subtypes.classifier import RitualSubtypePipeline
+    pipe = RitualSubtypePipeline()
+    stats = pipe.fit_from_csv(csv_path, seq_col=seq_col, label_col=label_col)
+    pipe.save(model_out)
+    print(json.dumps({"train_stats": stats, "model_out": model_out}, indent=2))
